@@ -192,6 +192,8 @@ class SunEventListener(ServiceEventListener):
         self.offset = offset
         self.negative_offset = negative_offset
 
+        self.next_time = None
+
     def __get_next_time(self, next_event):
         """
         Returns when the next time the service should be called.
@@ -219,8 +221,20 @@ class SunEventListener(ServiceEventListener):
             self.execute(hass)
 
         hass.track_point_in_time(execute, next_time)
+        self.next_time = next_time
 
         return next_time
+
+    def as_dict(self):
+        """ Converts SunEventListener to a dict to be used within JSON. """
+        d = ServiceEventListener.as_dict(self)
+
+        d['next_time'] = str(self.next_time)
+        d['offset'] = str(self.offset)
+        if self.negative_offset:
+            d['offset'] = "-" + d['offset']
+
+        return d
 
 
 # pylint: disable=too-few-public-methods

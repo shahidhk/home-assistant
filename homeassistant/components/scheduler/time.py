@@ -42,6 +42,8 @@ class TimeEventListener(ServiceEventListener):
         self.minute = minute
         self.second = second
 
+        self.next_time = None
+
     def schedule(self, hass):
         """ Schedule this event so that it will be called """
 
@@ -63,7 +65,19 @@ class TimeEventListener(ServiceEventListener):
             self.execute(hass)
 
         hass.track_point_in_time(execute, next_time)
+        self.next_time = next_time
 
         _LOGGER.info(
             'TimeEventListener scheduled for %s, will call service %s.%s',
             next_time, self.domain, self.service)
+
+    def as_dict(self):
+        """ Converts EventListener to a dict to be used within JSON. """
+        d = ServiceEventListener.as_dict(self)
+
+        d['hour'] = self.hour
+        d['minute'] = self.minute
+        d['second'] = self.second
+        d['next_time'] = str(self.next_time)
+
+        return d

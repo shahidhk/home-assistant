@@ -8,7 +8,7 @@ It will read a json object from schedule.json in the config dir
 and create a schedule based on it.
 Each schedule is a JSON with the keys id, name, description,
 entity_ids, and events.
-- days is an array with the weekday number (monday=0) that the schdule
+- days is an array with the weekday number (monday=0) that the schedule
     is active
 - entity_ids an array with entity ids that the events in the schedule should
     effect (can also be groups)
@@ -17,6 +17,7 @@ entity_ids, and events.
 """
 import logging
 import json
+import re
 
 from homeassistant import bootstrap
 from homeassistant.loader import get_component
@@ -25,12 +26,13 @@ from homeassistant.const import ATTR_ENTITY_ID
 # The domain of your component. Should be equal to the name of your component
 DOMAIN = 'scheduler'
 
-DEPENDENCIES = []
+DEPENDENCIES = ['http']
 
 _LOGGER = logging.getLogger(__name__)
 
 _SCHEDULE_FILE = 'schedule.json'
 
+_SCHEDULES = {}
 
 def setup(hass, config):
     """ Create the schedules """
@@ -72,16 +74,39 @@ def setup(hass, config):
                 schedule.add_event_listener(event_listener)
 
         schedule.schedule(hass)
-        return True
+
+        return schedule
+
+    def setup_api():
+        hass.http.register_path(
+            'GET',
+            re.compile(r'/api/scheduler/schedules'),
+            _api_get_schedules)
 
     with open(hass.get_config_path(_SCHEDULE_FILE)) as schedule_file:
         schedule_descriptions = json.load(schedule_file)
 
     for schedule_description in schedule_descriptions:
-        if not setup_schedule(schedule_description):
+        schedule = setup_schedule(schedule_description)
+        _SCHEDULES[schedule.schedule_id] = schedule
+
+        if not schedule:
             return False
 
+    setup_api()
+
     return True
+
+
+def _api_get_schedules(handler, path_match, data):
+    """ Return the schedule """
+
+    schedules_dict = {}
+
+    for schedule_id, schedule in _SCHEDULES.items():
+        schedules_dict[schedule_id] = schedule.as_dict()
+
+    handler.write_json(schedules_dict)
 
 
 class Schedule(object):
@@ -106,15 +131,28 @@ class Schedule(object):
         self.__event_listeners.append(event_listener)
 
     def schedule(self, hass):
-        """ Schedule all the events in the schdule """
+        """ Schedule all the events in the schedule """
         for event in self.__event_listeners:
             event.schedule(hass)
+
+    def as_dict(self):
+        """ Converts Schedule to a dict to be used within JSON. """
+
+        return {
+            "id": self.schedule_id,
+            "name": self.name,
+            "description": self.description,
+            "entity_ids": self.entity_ids,
+            "days": self.days,
+            "event_listeners": [el.as_dict() for el in self.__event_listeners]
+        }
 
 
 class EventListener(object):
     """ The base EventListner class that the schedule uses """
     def __init__(self, schedule):
         self.my_schedule = schedule
+        self.activation_type = "none"
 
     def schedule(self, hass):
         """ Schedule the event """
@@ -124,13 +162,19 @@ class EventListener(object):
         """ execute the event """
         pass
 
+    def as_dict(self):
+        """ Converts EventListener to a dict to be used within JSON. """
+        return {
+            'type': self.__class__.__name__
+        }
+
 
 # pylint: disable=too-few-public-methods
 class ServiceEventListener(EventListener):
     """ A EventListner that calls a service when executed """
 
-    def __init__(self, schdule, service):
-        EventListener.__init__(self, schdule)
+    def __init__(self, schedule, service):
+        EventListener.__init__(self, schedule)
 
         (self.domain, self.service) = service.split('.')
 
@@ -141,3 +185,13 @@ class ServiceEventListener(EventListener):
 
         # Reschedule for next day
         self.schedule(hass)
+
+    def as_dict(self):
+        """ Converts ServiceEventListener to a dict to be used within JSON. """
+
+        d = EventListener.as_dict(self)
+
+        d['domain'] = self.domain
+        d['service'] = self.service
+
+        return d
